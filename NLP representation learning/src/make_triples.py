@@ -2,8 +2,8 @@
 import pandas as pd, random, json, pathlib
 from tqdm import tqdm
 
-DATA = pathlib.Path("data")
-OUT  = pathlib.Path("data/triples.jsonl")
+DATA = pathlib.Path("/Users/agonsylejmani/Downloads/AIR/AIR#/NLP representation learning/data/")
+OUT  = pathlib.Path("/Users/agonsylejmani/Downloads/AIR/AIR#/NLP representation learning/data/triples.jsonl")
 N_HARD = 5          # BM25 negatives per query
 N_RAND = 2          # random negatives
 
