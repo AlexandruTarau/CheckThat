@@ -1,0 +1,14 @@
+{
+  "model_name": "bert-base-uncased",
+  "batch_size": 16,
+  "learning_rate": 1e-5,
+  "total_epochs": 10,
+  "accum_steps": 4,
+  "max_length": 256,
+  "bm25_top_k": 1000,
+  "log_dir": "runs/re_rank_experiment",
+  "save_dir": "rerank_model",
+  "collection_path": "subtask4b_collection_data.pkl",
+  "train_query_path": "subtask4b_query_tweets_train.tsv",
+  "dev_query_path": "subtask4b_query_tweets_dev.tsv"
+}
