@@ -1,6 +1,4 @@
-# AIR/src/pairwise_dataset.py
 from torch.utils.data import Dataset
-import torch
 
 class PairwiseDataset(Dataset):
     def __init__(self, df, tokenizer, max_length=256):
@@ -25,4 +23,8 @@ class PairwiseDataset(Dataset):
             'rel_attention_mask': rel['attention_mask'].squeeze(0),
             'non_rel_input_ids': non_rel['input_ids'].squeeze(0),
             'non_rel_attention_mask': non_rel['attention_mask'].squeeze(0),
+            'query': query,
+            'rel_doc': rel_doc,
+            'non_rel_doc': non_rel_doc
         }
+
