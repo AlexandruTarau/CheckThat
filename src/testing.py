@@ -35,12 +35,7 @@ def seed_everything(seed=42):
     torch.backends.cudnn.benchmark = False
 
 
-def preprocess_bm25(text):
-    tokens = wordpunct_tokenize(text.lower())
-    tokens = [w for w in tokens if w.isalpha() and w not in stop_words]
-    return ' '.join(tokens)
-
-
+# === Preprocessing ===
 def tokenize_for_bm25(text):
     tokens = word_tokenize(text.lower())
     return [t for t in tokens if t.isalpha()]
