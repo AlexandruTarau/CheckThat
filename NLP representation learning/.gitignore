@@ -1,0 +1,3 @@
+# Ignore all tab-separated value files
+*.tsv
+*.TSV
