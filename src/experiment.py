@@ -5,21 +5,22 @@ from nltk.corpus import stopwords
 from nltk.tokenize import wordpunct_tokenize
 from rank_bm25 import BM25Okapi
 import torch
-import torch.nn as nn
 from torch.nn import MarginRankingLoss
 from torch.utils.data import DataLoader
 from transformers import BertTokenizer
 from tqdm import tqdm
 import json
 
-from AIR.src.bert_for_reranking import BertForReRanking
-from AIR.src.pairwise_dataset import PairwiseDataset
+from bert_for_reranking import BertForReRanking
+from pairwise_dataset import PairwiseDataset
 
 from transformers import logging
-from transformers import get_linear_schedule_with_warmup
+from transformers import get_scheduler, get_cosine_schedule_with_warmup
 
 from torch.utils.tensorboard import SummaryWriter
-
+import re
+import html
+import unicodedata
 
 # Suppress warnings from transformers
 logging.set_verbosity_error()
@@ -28,19 +29,44 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 # === Preprocessing ===
 stop_words = set(stopwords.words('english'))
-def preprocess(text):
+def preprocess_bm25(text):
     tokens = wordpunct_tokenize(text.lower())
     tokens = [w for w in tokens if w.isalpha() and w not in stop_words]
     return ' '.join(tokens)
 
+def preprocess_reranker(text):
+    text = html.unescape(text)
+    text = unicodedata.normalize('NFKC', text)
 
-def create_scheduler(optimizer, train_loader, remaining_epochs, accum_steps):
-    total_steps = len(train_loader) * remaining_epochs // accum_steps
-    return get_linear_schedule_with_warmup(
-        optimizer,
-        num_warmup_steps=total_steps // 10,
-        num_training_steps=total_steps
-    )
+    # Remove URLs
+    text = re.sub(r'http\S+|www\.\S+', '', text)
+
+    # Remove hashtags
+    text = re.sub(r'#\w+', '', text)
+
+    # Normalize whitespace
+    text = re.sub(r'\s+', ' ', text).strip()
+
+    return text
+
+def create_scheduler(optimizer, train_loader, total_epochs, accum_steps, scheduler_type):
+    total_steps = (len(train_loader) // accum_steps) * total_epochs
+    warmup_steps = int(total_steps * 0.1)
+
+    if scheduler_type == "cosine":
+        return get_cosine_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=warmup_steps,
+            num_training_steps=total_steps,
+            num_cycles=0.5
+        )
+    else:
+        return get_scheduler(
+            name=scheduler_type,
+            optimizer=optimizer,
+            num_warmup_steps=warmup_steps,
+            num_training_steps=total_steps
+        )
 
 
 def main():
@@ -59,6 +85,13 @@ def main():
         PATH_COLLECTION = config.get('collection_path', 'subtask4b_collection_data.pkl')
         PATH_QUERY_TRAIN = config.get('train_query_path', 'subtask4b_query_tweets_train.tsv')
         PATH_QUERY_DEV = config.get('dev_query_path', 'subtask4b_query_tweets_dev.tsv')
+        margin_loss = config.get('margin_loss', 1.0)
+        weight_decay = config.get('weight_decay', 0.01)
+        scheduler_type = config.get('scheduler', "linear")
+
+    # === Save config ===
+    with open(f'{save_dir}/config.json', 'w') as f:
+        json.dump(config, f, indent=2)
 
     # === TensorBoard Setup ===
     writer = SummaryWriter(log_dir=log_dir)
@@ -69,7 +102,7 @@ def main():
 
     # === Prepare Corpus Text ===
     df_collection['text'] = df_collection['title'].fillna('') + ' ' + df_collection['abstract'].fillna('')
-    df_collection['text_clean'] = df_collection['text'].apply(preprocess)
+    df_collection['text_clean'] = df_collection['text'].apply(preprocess_reranker)
 
     # === BM25 Setup ===
     tqdm.pandas(desc="Initializing BM25")
@@ -91,7 +124,7 @@ def main():
             print(f"Computing BM25 top-{bm25_top_k} for {split}...")
             df = pd.read_csv(PATH_QUERY_TRAIN if split=='train' else PATH_QUERY_DEV, sep='\t')
             df[f'bm25_top{bm25_top_k}'] = df['tweet_text'].progress_apply(
-                lambda txt: bm25.get_top_n(preprocess(txt).split(), cord_uids, n=bm25_top_k)
+                lambda txt: bm25.get_top_n(preprocess_bm25(txt).split(), cord_uids, n=bm25_top_k)
             )
             df.to_pickle(pkl)
             if split == 'train':
@@ -107,7 +140,7 @@ def main():
     print(f"Query dev loaded:   {df_query_dev.shape}")
 
     # === Build lookup for doc texts ===
-    cord_to_text = dict(zip(df_collection['cord_uid'], df_collection['text_clean']))
+    cord_to_text = dict(zip(df_collection['cord_uid'], df_collection['text']))
 
     # === Load or Build Pairwise Dataset ===
     for split in ['train', 'dev']:
@@ -123,11 +156,15 @@ def main():
             print(f"Building pairwise dataset for {split} ({len(df_queries)} queries)...")
             data = []
             for _, row in tqdm(df_queries.iterrows(), total=len(df_queries), desc=f"Building PW {split}"):
-                query = preprocess(row['tweet_text'])
+                # query = clean_query(row['tweet_text'])
+                # query = row['tweet_text']
+                query = preprocess_reranker(row['tweet_text'])
+
                 true_uid = row['cord_uid']
                 if true_uid not in cord_to_text:
                     continue
-                rel_doc = cord_to_text[true_uid]
+                # rel_doc = cord_to_text[true_uid]
+                rel_doc = df_collection.loc[df_collection['cord_uid'] == true_uid, 'text'].values[0]
 
                 if true_uid not in row[f'bm25_top{bm25_top_k}']:
                     print(f"Warning!! true_uid \"{true_uid}\" not in bm25_top{bm25_top_k}.")
@@ -145,9 +182,15 @@ def main():
 
                 # Hard negative sampling
                 # non_rel_doc = cord_to_text[non_relevants[0]]
+                hard_negatives = non_relevants[:10]  # top 10 hard negatives
+                chosen = np.random.choice(hard_negatives)
+                non_rel_doc = df_collection.loc[df_collection['cord_uid'] == chosen, 'text'].values[0]
+
+                # non_rel_doc = df_collection.loc[df_collection['cord_uid'] == np.random.choice(non_relevants[:10]), 'text'].values[0]
+                # non_rel_doc = non_relevants[0]
 
                 # Random hard sampling
-                non_rel_doc = cord_to_text[np.random.choice(non_relevants[:10])]
+                # non_rel_doc = cord_to_text[np.random.choice(non_relevants[:10])]
 
                 data.append({'query': query, 'rel_doc': rel_doc, 'non_rel_doc': non_rel_doc})
 
@@ -169,8 +212,8 @@ def main():
     # === Model Setup ===
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = BertForReRanking().to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
-    loss_fn = MarginRankingLoss(margin=1.0)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    loss_fn = MarginRankingLoss(margin=margin_loss)
 
     # === Mixed Precision Setup ===
     from torch.amp import GradScaler, autocast
@@ -187,16 +230,14 @@ def main():
         start_epoch = checkpoint['epoch'] + 1
 
         # === Scheduler Setup ===
-        remaining_epochs = total_epochs - start_epoch + 1
-        scheduler = create_scheduler(optimizer, train_loader, remaining_epochs, accum_steps)
+        scheduler = create_scheduler(optimizer, train_loader, total_epochs, accum_steps, scheduler_type)
         scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
     else:
         print("No checkpoint found. Starting from scratch.")
         start_epoch = 1
 
         # === Scheduler Setup ===
-        remaining_epochs = total_epochs - start_epoch + 1
-        scheduler = create_scheduler(optimizer, train_loader, remaining_epochs, accum_steps)
+        scheduler = create_scheduler(optimizer, train_loader, total_epochs, accum_steps, scheduler_type)
 
     # === Training Loop ===
     for epoch in range(start_epoch, total_epochs + 1):
@@ -222,9 +263,9 @@ def main():
                 scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 scaler.step(optimizer)
+                scheduler.step()
                 scaler.update()
                 optimizer.zero_grad()
-                scheduler.step()
 
                 global_step = (epoch - 1) * len(train_loader) + step
                 writer.add_scalar("Loss/train", loss.item() * accum_steps, global_step)
@@ -238,7 +279,8 @@ def main():
 
         # Save loss, learning rate in train_log.txt
         with open(f'{save_dir}/train_log.txt', 'a') as log_file:
-            log_file.write(f"Epoch {epoch}, Loss: {avg_train_loss:.4f}, LR: {scheduler.get_last_lr()[0]:.6f}\n")
+            current_lr = scheduler.get_last_lr()[0]
+            log_file.write(f"Epoch {epoch}, Loss: {avg_train_loss:.4f}, LR: {current_lr:.6f}\n")
 
         # Save model
         torch.save({

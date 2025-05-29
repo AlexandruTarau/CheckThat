@@ -1,0 +1,9 @@
+{
+  "eval_epoch": 0,
+  "best_mrr": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "best_epoch": 0
+}
