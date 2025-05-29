@@ -13,7 +13,7 @@ MODELS = ROOT / "models"
 # -------------------------------------------------------------------
 # 2.  Load model and FAISS index
 # -------------------------------------------------------------------
-model_dir = sorted(MODELS.glob("dense_*"))[-1]        # newest checkpoint
+model_dir = sorted(MODELS.glob("dense_*"))[-1]
 model = SentenceTransformer(str(model_dir))
 
 index = faiss.read_index(str(MODELS / "paper_index.faiss"))

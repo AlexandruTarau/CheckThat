@@ -1,89 +1,115 @@
-import pandas as pd
-import pickle
-import faiss
+# src/predict_test.py   ––  Hybrid BM25 + dense  (macOS-safe)
+
+# ------------------------------------------------------------------
+# 0.  MUST come before importing faiss / numpy heavy libs
+# ------------------------------------------------------------------
+import os
+os.environ["OMP_NUM_THREADS"]      = "1"      # ← prevent OpenMP crashes
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"   # ← macOS / Intel quirk
+
+# ------------------------------------------------------------------
+# 1.  Imports
+# ------------------------------------------------------------------
+import pathlib, pickle, faiss, pandas as pd, numpy as np
 from sentence_transformers import SentenceTransformer
-import numpy as np
-import pathlib
+from rank_bm25 import BM25Okapi
 
-# Paths
-root_dir = pathlib.Path(__file__).parent.parent
-test_path = root_dir / "data" / "subtask4b_query_tweets_test.tsv"
-collection_path = root_dir / "data" / "subtask4b_collection_data.pkl"
-paper_ids_path = root_dir / "models" / "paper_ids.pkl"
-faiss_index_path = root_dir / "models" / "paper_index.faiss"
-model_dir = root_dir / "models"
+faiss.omp_set_num_threads(1)                    # ← belt-and-braces
 
-# Get latest dense model
-model_dirs = sorted(model_dir.glob("dense_*"), reverse=True)
-assert model_dirs, "No trained models found. Train first!"
-model_path = model_dirs[0]
+# ------------------------------------------------------------------
+# 2.  Paths
+# ------------------------------------------------------------------
+root_dir          = pathlib.Path(__file__).parent.parent
+test_path         = root_dir / "data"   / "subtask4b_query_tweets_test.tsv"
+collection_path   = root_dir / "data"   / "subtask4b_collection_data.pkl"
+paper_ids_path    = root_dir / "models" / "paper_ids.pkl"
+faiss_index_path  = root_dir / "models" / "paper_index.faiss"
+model_dir         = root_dir / "models"
 
-# Load model
-model = SentenceTransformer(str(model_path))
+# ------------------------------------------------------------------
+# 3.  Load encoder checkpoint
+# ------------------------------------------------------------------
+model_path = sorted(model_dir.glob("dense_*"), reverse=True)[0]
+model      = SentenceTransformer(str(model_path))
 
-# Load test queries
-test_df = pd.read_csv(test_path, sep='\t')
+# ------------------------------------------------------------------
+# 4.  Data
+# ------------------------------------------------------------------
+test_df = pd.read_csv(test_path, sep="\t", dtype={"post_id": str})
 
-# Load collection (id to metadata/text)
 with open(collection_path, "rb") as f:
-    collection = pickle.load(f)  # Usually a dict: paper_id -> {"title":..., "abstract":...}
+    col_obj = pickle.load(f)
 
-# Load paper_ids and ensure it's a list
+# either dict or DataFrame → make DataFrame with index = cord_uid
+if isinstance(col_obj, pd.DataFrame):
+    collection_df = col_obj.set_index("cord_uid")
+else:
+    collection_df = pd.DataFrame.from_dict(col_obj, orient="index")
+    collection_df.index.name = "cord_uid"
+
+for col in ("title", "abstract"):              # guard missing cols
+    if col not in collection_df.columns:
+        collection_df[col] = ""
+
 with open(paper_ids_path, "rb") as f:
-    paper_ids = pickle.load(f)
-    # Robustly convert to list if needed
-    if isinstance(paper_ids, pd.DataFrame) and paper_ids.shape[1] == 1:
-        paper_ids = paper_ids.iloc[:, 0].tolist()
-    elif hasattr(paper_ids, "tolist"):
-        paper_ids = paper_ids.tolist()
-    # Now paper_ids should be a plain list
-    assert isinstance(paper_ids, list), f"paper_ids is not a list, but {type(paper_ids)}"
+    tmp = pickle.load(f)
+    if isinstance(tmp, pd.DataFrame) and tmp.shape[1] == 1:
+        paper_ids = tmp.iloc[:, 0].astype(str).tolist()
+    else:
+        paper_ids = [str(x) for x in list(tmp)]
 
-
-# Load paper_ids and ensure it's a list
-with open(paper_ids_path, "rb") as f:
-    paper_ids = pickle.load(f)
-    if isinstance(paper_ids, pd.DataFrame) and paper_ids.shape[1] == 1:
-        paper_ids = paper_ids.iloc[:, 0].tolist()
-    elif hasattr(paper_ids, "tolist"):
-        paper_ids = paper_ids.tolist()
-    assert isinstance(paper_ids, list), f"paper_ids is not a list, but {type(paper_ids)}"
-
-# Load FAISS index
 index = faiss.read_index(str(faiss_index_path))
 
-# --- ADD THIS BLOCK RIGHT HERE ---
-print("Number of paper_ids:", len(paper_ids))
-print("FAISS index ntotal:", index.ntotal)
-print("FAISS index dimension d:", index.d)
-# Test the embedding dimension
-sample_vec = model.encode(["test"], convert_to_numpy=True)
-print("Sample embedding shape:", sample_vec.shape)
-assert sample_vec.shape[1] == index.d, "Embedding dimension does not match FAISS index dimension!"
-assert len(paper_ids) == index.ntotal, "paper_ids and FAISS index size do not match!"
-# --- END DEBUG BLOCK ---
+# ------------------------------------------------------------------
+# 5.  Build BM25 (aligned with paper_ids order)
+# ------------------------------------------------------------------
+def safe_text(row):
+    return (str(row["title"]) + " " + str(row["abstract"])).lower()
 
+paper_texts = [safe_text(collection_df.loc[pid])
+               if pid in collection_df.index else ""
+               for pid in paper_ids]
 
-# Load FAISS index
-index = faiss.read_index(str(faiss_index_path))
+bm25 = BM25Okapi([doc.split() for doc in paper_texts])
+
+# ------------------------------------------------------------------
+# 6.  Retrieval loop  (hybrid score)
+# ------------------------------------------------------------------
+TOP_K_DENSE = 10      # dense shortlist
+TOP_OUT     = 10      # final list
+ALPHA       = 0.4     # BM25 weight
 
 results = []
-top_k = 5
 
-for idx, row in test_df.iterrows():
-    tweet_id = row['post_id']  # use the correct column name!
-    tweet_text = row['tweet_text']
+for _, row in test_df.iterrows():
+    qid, tweet = row["post_id"], row["tweet_text"]
 
-    query_vec = model.encode([tweet_text], convert_to_numpy=True).astype("float32")
-    D, I = index.search(query_vec, top_k)
+    # dense embedding  ––  make it contiguous float32 row
+    q_vec = model.encode([tweet], convert_to_numpy=True)
+    q_vec = np.ascontiguousarray(q_vec.astype("float32"))   # ← crucial
 
-    for rank, (idx_in_index, score) in enumerate(zip(I[0], D[0]), 1):
-        paper_id = paper_ids[idx_in_index]
-        results.append([tweet_id, paper_id, rank, float(score)])
+    D, I = index.search(q_vec, TOP_K_DENSE)                 # cosine scores
+    bm25_scores_all = bm25.get_scores(tweet.lower().split())
 
-# Save all predictions as before
-out_dir = root_dir / "output"
+    hits = []
+    for dense_score, idx in zip(D[0], I[0]):
+        pid          = paper_ids[idx]
+        hybrid       = ALPHA * bm25_scores_all[idx] + (1 - ALPHA) * dense_score
+        hits.append((hybrid, pid))
+
+    hits.sort(reverse=True)
+    for rank, (score, pid) in enumerate(hits[:TOP_OUT], 1):
+        results.append([qid, pid, rank, float(score)])
+
+# ------------------------------------------------------------------
+# 7.  Save run file (long format)
+# ------------------------------------------------------------------
+out_dir  = root_dir / "output"
 out_dir.mkdir(exist_ok=True)
 out_path = out_dir / "test_predictions.tsv"
-pd.DataFrame(results, columns=['tweet_id', 'paper_id', 'rank', 'score']).to_csv(out_path, sep='\t', index=False)
-print(f"Predictions saved to {out_path}")
+
+pd.DataFrame(results,
+             columns=["tweet_id", "paper_id", "rank", "score"]
+            ).to_csv(out_path, sep="\t", index=False)
+
+print(f"✅  Predictions saved to {out_path}")
