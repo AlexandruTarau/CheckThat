@@ -8,7 +8,7 @@
   "max_length": 512,
   "bm25_top_k": 1000,
   "log_dir": "runs/re_rank_experiment",
-  "save_dir": "rerank_model/Models/Model21",
+  "save_dir": "rerank_model/Models/Model1",
   "collection_path": "subtask4b_collection_data.pkl",
   "train_query_path": "subtask4b_query_tweets_train.tsv",
   "test_query_path": "subtask4b_query_tweets_test_gold.tsv",
