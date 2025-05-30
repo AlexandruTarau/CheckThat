@@ -18,14 +18,14 @@ Edit the config.json file to set paths, model names, batch size, max length, etc
 1. Training
 Train the re-ranking model with:
 ```bash
-python train.py --config config.json
+python3 training.py
 ```
 The models for each epoch, as well as the log files and metrics will be saved at "save_dir" location set in config.
 
 3. Evaluation
 Evaluate the trained model using:
 ```bash
-python evaluate.py --config config.json
+python3 testing.py
 ```
 Evaluation metrics such as MRR@1, MRR@5, and MRR@10 will be logged to eval_log.txt and metrics.json at "save_dir" location set in config. The predictions will be save as .tsv files at "{save_dir}/predictions".
 
