@@ -7,11 +7,12 @@ import faiss
 from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
 
+
 # set paths
-tree_root = pathlib.Path("/Users/agonsylejmani/Downloads/AIR/AIR#/NLP representation learning")
-data_dir  = tree_root / "data"
-models_dir= tree_root / "models"
-run_dir   = tree_root
+tree_root  = pathlib.Path("/Users/agonsylejmani/Downloads/AIR-1/Representation Learning (Dense Retrieval)/NLP representation learning")
+data_dir   = tree_root / "data"
+models_dir = tree_root / "models"
+run_dir    = tree_root
 
 # select latest model checkpoint
 model_dir = sorted(models_dir.glob("dense_*"))[-1]
@@ -44,14 +45,15 @@ dev_df = pd.read_csv(
 print(f"-> loaded {len(train_df)} train and {len(dev_df)} dev queries")
 all_queries = pd.concat([train_df, dev_df], ignore_index=True)
 
-# encode tweets
+# encode tweets (no background workers)
 print(f"-> encoding {len(all_queries)} tweets")
 embeddings = model.encode(
     all_queries.tweet.tolist(),
     batch_size=64,
     show_progress_bar=True,
     convert_to_numpy=True,
-    normalize_embeddings=True
+    normalize_embeddings=True,
+    num_workers=0      # <— force single‐process encoding
 )
 
 # retrieve top-k for each query
@@ -59,12 +61,12 @@ k = 5
 batch_size = 512
 predictions = []
 for start in tqdm(range(0, len(embeddings), batch_size)):
-    batch = embeddings[start:start+batch_size].astype(np.float32)
+    batch = embeddings[start : start + batch_size].astype(np.float32)
     _, indices = index.search(batch, k)
-    predictions.extend(indices)
+    predictions.extend(indices.tolist())
 
 # split train and dev results
-n_train = len(train_df)
+n_train     = len(train_df)
 train_preds = predictions[:n_train]
 dev_preds   = predictions[n_train:]
 
