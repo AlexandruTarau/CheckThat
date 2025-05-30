@@ -6,7 +6,7 @@
 Install the dependencies using `pip`. You can use a virtual environment for isolation.
 
 ```bash
-pip install torch transformers pandas scikit-learn tqdm nltk
+pip install torch transformers pandas scikit-learn tqdm nltk html rank_bm25
 ```
 
 
