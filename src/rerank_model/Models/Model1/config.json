@@ -1,0 +1,19 @@
+{
+  "_model_name": "bert-base-uncased",
+  "model_name": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+  "batch_size": 32,
+  "learning_rate": 3e-05,
+  "total_epochs": 5,
+  "accum_steps": 2,
+  "max_length": 512,
+  "bm25_top_k": 1000,
+  "log_dir": "runs/re_rank_experiment",
+  "save_dir": "rerank_model/Models/Model1",
+  "collection_path": "subtask4b_collection_data.pkl",
+  "train_query_path": "subtask4b_query_tweets_train.tsv",
+  "test_query_path": "subtask4b_query_tweets_test_gold.tsv",
+  "margin_loss": 1.0,
+  "weight_decay": 0.01,
+  "scheduler": "linear",
+  "seed": 42
+}
