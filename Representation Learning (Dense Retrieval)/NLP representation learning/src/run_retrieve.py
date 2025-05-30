@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 
 # set paths
-tree_root  = pathlib.Path(__file__).parent.parent
+tree_root  = pathlib.Path(__file__).parent.parent # change maybe if it makes problems 
 data_dir   = tree_root / "data"
 models_dir = tree_root / "models"
 run_dir    = tree_root

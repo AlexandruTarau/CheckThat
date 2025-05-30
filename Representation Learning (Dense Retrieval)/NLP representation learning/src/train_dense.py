@@ -6,7 +6,7 @@ import json, pathlib, datetime
 triples_path = pathlib.Path("/Users/agonsylejmani/Downloads/AIR/AIR#/NLP representation learning/data/triples.jsonl")
 model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
-# 1. read triples ----------------------------------------------------
+# 1. read triples 
 examples = []
 with triples_path.open() as f:
     for line in f:
@@ -14,7 +14,7 @@ with triples_path.open() as f:
         examples.append(InputExample(texts=[j["query"], j["pos"]]))
         examples.append(InputExample(texts=[j["query"], j["neg"]]))
 
-# 2. wrap in Dataset & DataLoader -----------------------------------
+# 2. wrap in Dataset & DataLoader 
 train_dataset  = SentencesDataset(examples, model)
 train_loader   = DataLoader(
     train_dataset,
@@ -23,10 +23,10 @@ train_loader   = DataLoader(
     collate_fn=model.smart_batching_collate
 )
 
-# 3. define loss -----------------------------------------------------
+# 3. define loss 
 train_loss = losses.MultipleNegativesRankingLoss(model)
 
-# 4. fine‑tune -------------------------------------------------------
+# 4. fine‑tune 
 model.fit(
     train_objectives=[(train_loader, train_loss)],
     epochs=2,
