@@ -1,5 +1,4 @@
-# src/run_retrieve.py
-
+#!/usr/bin/env python3
 import json
 import pathlib
 import numpy as np
@@ -8,34 +7,46 @@ import faiss
 from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
 
-# -------------------------------------------------------------------
-# 1.  Set paths
-# -------------------------------------------------------------------
-ROOT   = pathlib.Path("/Users/agonsylejmani/Downloads/AIR/AIR#/NLP representation learning")
-DATA   = ROOT / "data"
-MODELS = ROOT / "models"
+# set paths
+tree_root = pathlib.Path("/Users/agonsylejmani/Downloads/AIR/AIR#/NLP representation learning")
+data_dir  = tree_root / "data"
+models_dir= tree_root / "models"
+run_dir   = tree_root
 
-# -------------------------------------------------------------------
-# 2.  Load model and FAISS index
-# -------------------------------------------------------------------
-model_dir = sorted(MODELS.glob("dense_*"))[-1]  # use most recent model directory
+# select latest model checkpoint
+model_dir = sorted(models_dir.glob("dense_*"))[-1]
+
+# load model
+print(f"-> loading model from {model_dir}")
 model = SentenceTransformer(str(model_dir))
 
-index = faiss.read_index(str(MODELS / "paper_index.faiss"))
-paper_ids = pd.read_pickle(str(MODELS / "paper_ids.pkl"))["cord_uid"].tolist()
+# load faiss index
+index_file = models_dir / "paper_index.faiss"
+print(f"-> loading faiss index from {index_file}")
+index = faiss.read_index(str(index_file))
 
-# -------------------------------------------------------------------
-# 3.  Load and concatenate both train and dev queries
-# -------------------------------------------------------------------
-train = pd.read_csv(DATA / "subtask4b_query_tweets_train.tsv", sep="\t", names=["post_id", "tweet", "label"])
-dev   = pd.read_csv(DATA / "subtask4b_query_tweets_dev.tsv", sep="\t", names=["post_id", "tweet", "label"])
+# load paper ids
+paper_ids = pd.read_pickle(models_dir / "paper_ids.pkl")["cord_uid"].tolist()
 
-all_queries = pd.concat([train, dev], ignore_index=True)
+# load train and dev queries
+train_df = pd.read_csv(
+    data_dir / "subtask4b_query_tweets_train.tsv",
+    sep="\t",
+    names=["post_id", "tweet", "cord_uid"],
+    dtype={"post_id": str}
+)
+dev_df = pd.read_csv(
+    data_dir / "subtask4b_query_tweets_dev.tsv",
+    sep="\t",
+    names=["post_id", "tweet", "cord_uid"],
+    dtype={"post_id": str}
+)
+print(f"-> loaded {len(train_df)} train and {len(dev_df)} dev queries")
+all_queries = pd.concat([train_df, dev_df], ignore_index=True)
 
-# -------------------------------------------------------------------
-# 4.  Encode tweets and perform dense retrieval
-# -------------------------------------------------------------------
-q_emb = model.encode(
+# encode tweets
+print(f"-> encoding {len(all_queries)} tweets")
+embeddings = model.encode(
     all_queries.tweet.tolist(),
     batch_size=64,
     show_progress_bar=True,
@@ -43,20 +54,30 @@ q_emb = model.encode(
     normalize_embeddings=True
 )
 
-all_preds = []
+# retrieve top-k for each query
+k = 5
 batch_size = 512
-for i in tqdm(range(0, len(q_emb), batch_size)):
-    batch = q_emb[i:i + batch_size].astype(np.float32)
-    _, I = index.search(batch, k=5)
-    all_preds.extend(I)
+predictions = []
+for start in tqdm(range(0, len(embeddings), batch_size)):
+    batch = embeddings[start:start+batch_size].astype(np.float32)
+    _, indices = index.search(batch, k)
+    predictions.extend(indices)
 
-# -------------------------------------------------------------------
-# 5.  Write predictions to TSV
-# -------------------------------------------------------------------
-run_path = ROOT / "dense_submission.tsv"
-with run_path.open("w") as f:
-    for pid, top5 in zip(all_queries.post_id, I):
-        preds = [paper_ids[i] for i in top5]
-        f.write(f"{pid}\t{json.dumps(preds)}\n")
+# split train and dev results
+n_train = len(train_df)
+train_preds = predictions[:n_train]
+dev_preds   = predictions[n_train:]
 
-print("✅ Wrote:", run_path)
+# write train-only predictions
+out_train = run_dir / "dense_train_only.tsv"
+with out_train.open("w") as f:
+    for pid, idxs in zip(train_df.post_id, train_preds):
+        f.write(f"{pid}\t{json.dumps([paper_ids[i] for i in idxs])}\n")
+print(f"train predictions saved to {out_train}")
+
+# write dev-only predictions
+out_dev = run_dir / "dense_dev_only.tsv"
+with out_dev.open("w") as f:
+    for pid, idxs in zip(dev_df.post_id, dev_preds):
+        f.write(f"{pid}\t{json.dumps([paper_ids[i] for i in idxs])}\n")
+print(f"dev predictions saved to {out_dev}")
