@@ -139,13 +139,13 @@ print(f"Results on the dev set: {results_dev}")
 
 
 # %% [markdown]
-# ## 3 bis) Evaluating our dense‑retrieval run file
+# ## 3 bis) Evaluating our dense-retrieval run file on both train & dev
 # -------------------------------------------------
-# This cell loads the TSV produced by `run_retrieve.py`, turns the JSON strings
-# into lists, joins them with the dev‑set ground‑truth, and prints MRR@k.
+# Load the TSV produced by run_retrieve.py, parse JSON, then print MRR@k for both splits.
 
 # %%
 import json, pathlib
+import pandas as pd
 
 # --- 1. Path to the run file --------------------------------------------------
 RUN_FILE = pathlib.Path("/Users/agonsylejmani/Downloads/AIR/AIR#/NLP representation learning/dense_submission.tsv")
@@ -155,19 +155,23 @@ df_run = pd.read_csv(
     RUN_FILE,
     sep='\t',
     names=['post_id', 'preds_json'],
-    dtype={'post_id': str, 'preds_json': str}   # force string right away
+    dtype={'post_id': str, 'preds_json': str}
 )
-
 df_run['preds'] = df_run['preds_json'].apply(json.loads)
 
-# --- make sure both sides are strings -----------------------------------------
+# --- 3. Ensure post_id is string in both splits -----------------------------
 df_query_dev['post_id'] = df_query_dev['post_id'].astype(str)
+df_query_train['post_id'] = df_query_train['post_id'].astype(str)
 
-# --- merge & evaluate ---------------------------------------------------------
-df_eval = df_query_dev.merge(df_run[['post_id', 'preds']], on='post_id')
-results_dense = get_performance_mrr(df_eval, 'cord_uid', 'preds')
-print(f"Dense model results on the dev set (MRR@k): {results_dense}")
+# --- 4. Merge & evaluate on DEV set ------------------------------------------
+df_eval_dev = df_query_dev.merge(df_run[['post_id', 'preds']], on='post_id')
+results_dense_dev = get_performance_mrr(df_eval_dev, 'cord_uid', 'preds')
+print(f"Dense model results on the DEV set (MRR@k): {results_dense_dev}")
 
+# --- 5. Merge & evaluate on TRAIN set ----------------------------------------
+df_eval_train = df_query_train.merge(df_run[['post_id', 'preds']], on='post_id')
+results_dense_train = get_performance_mrr(df_eval_train, 'cord_uid', 'preds')
+print(f"Dense model results on the TRAIN set (MRR@k): {results_dense_train}")
 
 # %% [markdown]
 # ### (Optional) Replace the BM25 column so the rest of the notebook uses the dense results
