@@ -1,4 +1,3 @@
-Alexandru-Bogdan Tarau
 # AIR project - CheckThat!
 ## Neural Re-ranking Model
 
