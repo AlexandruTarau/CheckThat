@@ -3,8 +3,8 @@ from tqdm import tqdm
 
 DATA = pathlib.Path("/Users/agonsylejmani/Downloads/AIR/AIR#/NLP representation learning/data/")
 OUT  = pathlib.Path("/Users/agonsylejmani/Downloads/AIR/AIR#/NLP representation learning/data/triples.jsonl")
-N_HARD = 5          # BM25 negatives per query
-N_RAND = 2          # random negatives
+N_HARD = 5          
+N_RAND = 2          
 
 # 1. load tweets & papers
 train = (
