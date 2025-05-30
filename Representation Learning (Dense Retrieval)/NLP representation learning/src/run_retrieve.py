@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 
 # set paths
-tree_root  = pathlib.Path("/Users/agonsylejmani/Downloads/AIR-1/Representation Learning (Dense Retrieval)/NLP representation learning")
+tree_root  = pathlib.Path(__file__).parent.parent
 data_dir   = tree_root / "data"
 models_dir = tree_root / "models"
 run_dir    = tree_root
